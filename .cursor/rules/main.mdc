@@ -1,0 +1,9 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+
+# Your rule content
+
+- 代码必须符合.NET Framework 3.5 和 C# 3.0语法规范。
