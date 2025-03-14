@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Text.RegularExpressions;
+using System.Timers;
 
 namespace FileWatcherLib
 {
@@ -19,6 +20,9 @@ namespace FileWatcherLib
         private bool _isWatching;                         // 当前是否正在监视
         private bool _includeSubdirectories;              // 是否监视子目录
         private Regex fileNamePattern;                      // 文件名匹配模式
+        private System.Timers.Timer scanTimer;
+        private HashSet<string> processedFiles;
+        private const int DEFAULT_SCAN_INTERVAL = 30000; // 30秒
 
         // 文件变化事件委托
         public event EventHandler<FileChangeEventArgs> FileChanged;    // 文件修改事件
@@ -83,6 +87,43 @@ namespace FileWatcherLib
             _watchAllTypes = true;
             _isWatching = false;
             _includeSubdirectories = false;
+            processedFiles = new HashSet<string>();
+            InitializeTimer();
+        }
+
+        private void InitializeTimer()
+        {
+            scanTimer = new System.Timers.Timer(DEFAULT_SCAN_INTERVAL);
+            scanTimer.Elapsed += OnScanTimerElapsed;
+            scanTimer.AutoReset = true;
+        }
+
+        private void OnScanTimerElapsed(object sender, System.Timers.ElapsedEventArgs e)
+        {
+            if (string.IsNullOrEmpty(WatchPath) || !Directory.Exists(WatchPath))
+                return;
+
+            try
+            {
+                var files = Directory.GetFiles(WatchPath);
+                foreach (string filePath in files)
+                {
+                    if (!processedFiles.Contains(filePath) && IsFileValid(filePath))
+                    {
+                        processedFiles.Add(filePath);
+                        // 创建一个 FileSystemEventArgs 实例来复用现有的事件处理方法
+                        OnFileCreated(this, new FileSystemEventArgs(WatcherChangeTypes.Created, 
+                            Path.GetDirectoryName(filePath), Path.GetFileName(filePath)));
+                    }
+                }
+
+                // 清理已经不存在的文件记录
+                processedFiles.RemoveWhere(f => !File.Exists(f));
+            }
+            catch (Exception)
+            {
+                // 记录错误但继续运行
+            }
         }
 
         /// <summary>
@@ -152,6 +193,7 @@ namespace FileWatcherLib
             _watcher.Renamed += OnFileRenamed;
 
             _isWatching = true;
+            scanTimer.Start();
         }
 
         /// <summary>
@@ -175,6 +217,8 @@ namespace FileWatcherLib
             }
 
             _isWatching = false;
+            scanTimer.Stop();
+            processedFiles.Clear();
         }
 
         /// <summary>

@@ -2,8 +2,9 @@ using System;
 using System.IO;
 using System.Threading;
 using System.Collections.Generic;
+using FileWatcherLib;
 
-namespace TestProgram
+namespace FileWatcherLib
 {
     /// <summary>
     /// 文件处理状态枚举
@@ -248,29 +249,75 @@ namespace TestProgram
         {
             int retryCount = 0;
             string fileName = Path.GetFileName(sourcePath);
-            
+
             while (retryCount < MAX_RETRIES)
             {
                 try
                 {
+                    // 检查源文件是否可以访问
                     using (FileStream fs = File.Open(sourcePath, FileMode.Open, FileAccess.Read, FileShare.None))
                     {
                         fs.Close();
                     }
 
+                    // 确保目标目录存在
+                    string targetDir = Path.GetDirectoryName(targetPath);
+                    if (!Directory.Exists(targetDir))
+                    {
+                        Directory.CreateDirectory(targetDir);
+                    }
+
+                    // 如果目标文件存在，先尝试删除它
+                    if (File.Exists(targetPath))
+                    {
+                        try
+                        {
+                            File.Delete(targetPath);
+                        }
+                        catch (IOException)
+                        {
+                            // 如果目标文件被占用，等待后重试
+                            retryCount++;
+                            if (retryCount < MAX_RETRIES)
+                            {
+                                OnFileProcessStatusChanged(fileName, sourcePath, targetPath,
+                                    FileProcessStatus.Retrying,
+                                    string.Format("目标文件被占用，{0}毫秒后进行第{1}次重试",
+                                        RETRY_DELAY, retryCount + 1),
+                                    null);
+                                Thread.Sleep(RETRY_DELAY);
+                                continue;
+                            }
+                            throw;  // 如果重试次数已达上限，抛出异常
+                        }
+                    }
+
+                    // 尝试移动文件
                     File.Move(sourcePath, targetPath);
                     return true;
                 }
-                catch (IOException)
+                catch (IOException ex)
                 {
+                    // 文件被占用，等待后重试
                     retryCount++;
                     if (retryCount < MAX_RETRIES)
                     {
-                        OnFileProcessStatusChanged(fileName, sourcePath, targetPath, 
-                            FileProcessStatus.Retrying, 
-                            string.Format("文件正在被占用，{0}毫秒后进行第{1}次重试", RETRY_DELAY, retryCount + 1), null);
+                        OnFileProcessStatusChanged(fileName, sourcePath, targetPath,
+                            FileProcessStatus.Retrying,
+                            string.Format("文件正在被占用，{0}毫秒后进行第{1}次重试",
+                                RETRY_DELAY, retryCount + 1),
+                            ex);
                         Thread.Sleep(RETRY_DELAY);
                     }
+                }
+                catch (Exception ex)
+                {
+                    // 其他错误，记录后返回失败
+                    OnFileProcessStatusChanged(fileName, sourcePath, targetPath,
+                        FileProcessStatus.Failed,
+                        "移动文件时发生错误",
+                        ex);
+                    return false;
                 }
             }
 
